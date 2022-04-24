@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, Ref, watch } from "vue";
+import { computed, onMounted, ref, Ref, watch } from "vue";
 import { NSpace, NButton, NSwitch, NIcon, NTooltip } from "naive-ui";
 import _ from "lodash";
 import Sortable from "sortablejs";
@@ -8,7 +8,8 @@ import IconList from "@/assets/icons/list.svg?component";
 import IconGrid from "@/assets/icons/grid.svg?component";
 import Configuration from "@/components/configurations/Index.vue";
 
-import useTaskStore, { defaultTask, handleSingleTask } from "@/store/tasks";
+import useTaskStore, { defaultTask } from "@/store/tasks";
+import handleSingleTask from "@/utils/converter/tasks";
 
 import router from "@/router";
 
@@ -17,8 +18,12 @@ const taskStore = useTaskStore();
 const isGrid = ref<boolean>(false);
 const cardsRef: Ref<HTMLElement | null> = ref(null);
 
-const uuid: Ref<string | null> = ref(null);
-const tasks: Ref<Array<Task> | null> = ref(null);
+const uuid = computed(() => router.currentRoute.value.params.uuid as string);
+const tasks = computed(() => {
+  if (!taskStore.deviceTasks[uuid.value])
+    taskStore.updateTask(uuid.value, defaultTask);
+  return taskStore.deviceTasks[uuid.value];
+});
 
 onMounted(() => {
   load();
@@ -29,11 +34,6 @@ watch(router.currentRoute, () => {
 });
 
 function load() {
-  uuid.value = router.currentRoute.value.params.uuid as string;
-  console.log(`current uuid: ${uuid.value}`);
-  if (!taskStore.deviceTasks[uuid.value])
-    taskStore.deviceTasks[uuid.value] = _.cloneDeep(defaultTask);
-  tasks.value = taskStore.deviceTasks[uuid.value];
   if (cardsRef.value) {
     new Sortable(cardsRef.value, {
       swapThreshold: 1,
@@ -64,13 +64,13 @@ function load() {
   }
 }
 
-function handleStart() {
-  tasks.value?.forEach((singleTask) => {
+async function handleStart() {
+  tasks.value?.forEach(async (singleTask) => {
     if (singleTask.enable) {
-      taskStore.updateTaskStatus(uuid.value as string,singleTask.id,"processing",0);
+      taskStore.updateTaskStatus(uuid.value, singleTask.id, "processing", 0);
       const task = handleSingleTask[singleTask.id](singleTask.configurations);
       console.log(task);
-      window.ipcRenderer.sendSync("asst:appendTask", {
+      await window.ipcRenderer.invoke("asst:appendTask", {
         uuid: uuid.value,
         type: {
           startup: "StartUp",
@@ -82,13 +82,16 @@ function handleStart() {
           award: "Award",
           rogue: "Roguelike",
         }[singleTask.id],
-        params:task,
+        params: task,
       });
     }
   });
 
-
-  window.ipcRenderer.sendSync("asst:start",{uuid:uuid.value});
+  // 初始化掉落物存储
+  if(!window.sessionStorage.getItem(uuid.value as string))
+      window.sessionStorage.setItem(uuid.value as string,"{\"StageDrops\":{}}");
+      
+  await window.ipcRenderer.invoke("asst:start",{uuid:uuid.value});
 }
 </script>
 
